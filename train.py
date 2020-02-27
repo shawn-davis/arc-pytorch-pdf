@@ -2,6 +2,7 @@ import os
 import argparse
 import torch
 from torch.autograd import Variable
+import torch.nn as nn
 from datetime import datetime, timedelta
 
 import batcher
@@ -11,11 +12,12 @@ from models import ArcBinaryClassifier
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--batchSize', type=int, default=128, help='input batch size')
-parser.add_argument('--imageSize', type=int, default=32, help='the height / width of the input image to ARC')
-parser.add_argument('--glimpseSize', type=int, default=8, help='the height / width of glimpse seen by ARC')
-parser.add_argument('--numStates', type=int, default=128, help='number of hidden states in ARC controller')
-parser.add_argument('--numGlimpses', type=int, default=6, help='the number glimpses of each image in pair seen by ARC')
+parser.add_argument('--batchSize', type=int, default=64, help='input batch size')
+parser.add_argument('--imageHeight', type=int, default=1418, help='the height of the input image to ARC')
+parser.add_argument('--imageWidth', type=int, default=1812, help='the width of the input pdf to ARC')
+parser.add_argument('--glimpseSize', type=int, default=32, help='the height / width of glimpse seen by ARC')
+parser.add_argument('--numStates', type=int, default=256, help='number of hidden states in ARC controller')
+parser.add_argument('--numGlimpses', type=int, default=10, help='the number glimpses of each image in pair seen by ARC')
 parser.add_argument('--lr', type=float, default=0.0002, help='learning rate, default=0.0002')
 parser.add_argument('--cuda', action='store_true', help='enables cuda')
 parser.add_argument('--name', default=None, help='Custom name for this configuration. Needed for saving'
@@ -25,7 +27,7 @@ parser.add_argument('--load', default=None, help='the model to load from. Start 
 
 def get_pct_accuracy(pred: Variable, target) -> int:
     hard_pred = (pred > 0.5).int()
-    correct = (hard_pred == target).sum().data[0]
+    correct = (hard_pred == target).sum().data.item()
     accuracy = float(correct) / target.size()[0]
     accuracy = int(accuracy * 100)
     return accuracy
@@ -34,9 +36,9 @@ def get_pct_accuracy(pred: Variable, target) -> int:
 def train():
     opt = parser.parse_args()
 
-    if opt.cuda:
-        batcher.use_cuda = True
-        models.use_cuda = True
+#    if opt.cuda:
+#        batcher.use_cuda = True
+#        models.use_cuda = True
 
     if opt.name is None:
         # if no name is given, we generate a name from the parameters.
@@ -50,14 +52,25 @@ def train():
     models_path = os.path.join("saved_models", opt.name)
     os.makedirs(models_path, exist_ok=True)
 
+    device = torch.device("cuda:0" if opt.cuda else "cpu")
+    
+    batcher.device = device
+    models.device = device
+    
     # initialise the model
     discriminator = ArcBinaryClassifier(num_glimpses=opt.numGlimpses,
                                         glimpse_h=opt.glimpseSize,
                                         glimpse_w=opt.glimpseSize,
                                         controller_out=opt.numStates)
 
-    if opt.cuda:
-        discriminator.cuda()
+    if torch.cuda.device_count() > 1:
+        print("Let's use", torch.cuda.device_count(), "GPUs!")
+        discriminator = nn.DataParallel(discriminator)
+        
+    discriminator.to(device)
+    
+#    if opt.cuda:
+#        discriminator.cuda()
 
     # load from a previous checkpoint, if specified.
     if opt.load is not None:
@@ -65,13 +78,14 @@ def train():
 
     # set up the optimizer.
     bce = torch.nn.BCELoss()
-    if opt.cuda:
-        bce = bce.cuda()
+    bce.to(device)
+#    if opt.cuda:
+#        bce = bce.cuda()
 
     optimizer = torch.optim.Adam(params=discriminator.parameters(), lr=opt.lr)
 
     # load the dataset in memory.
-    loader = Batcher(batch_size=opt.batchSize, image_size=opt.imageSize)
+    loader = Batcher(batch_size=opt.batchSize)#, image_size=opt.imageSize)
 
     # ready to train ...
     best_validation_loss = None
@@ -94,8 +108,8 @@ def train():
             pred_val = discriminator(X_val)
             loss_val = bce(pred_val, Y_val.float())
 
-            training_loss = loss.data[0]
-            validation_loss = loss_val.data[0]
+            training_loss = loss.data.item()
+            validation_loss = loss_val.data.item()
 
             print("Iteration: {} \t Train: Acc={}%, Loss={} \t\t Validation: Acc={}%, Loss={}".format(
                 i, get_pct_accuracy(pred, Y), training_loss, get_pct_accuracy(pred_val, Y_val), validation_loss
@@ -108,13 +122,19 @@ def train():
                 print("Significantly improved validation loss from {} --> {}. Saving...".format(
                     best_validation_loss, validation_loss
                 ))
-                discriminator.save_to_file(os.path.join(models_path, str(validation_loss)))
+                if torch.cuda.device_count() > 1:
+                    torch.save(discriminator.state_dict(), os.path.join(models_path, str(validation_loss)))
+                else:
+                    discriminator.save_to_file(os.path.join(models_path, str(validation_loss)))
                 best_validation_loss = validation_loss
                 last_saved = datetime.utcnow()
 
             if last_saved + save_every < datetime.utcnow():
                 print("It's been too long since we last saved the model. Saving...")
-                discriminator.save_to_file(os.path.join(models_path, str(validation_loss)))
+                if torch.cuda.device_count() > 1:
+                    torch.save(discriminator.state_dict(), os.path.join(models_path, str(validation_loss)))
+                else:
+                    discriminator.save_to_file(os.path.join(models_path, str(validation_loss)))
                 last_saved = datetime.utcnow()
 
         optimizer.zero_grad()

@@ -4,8 +4,8 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 import math
 
-use_cuda = False
-
+#use_cuda = False
+device = torch.device("cpu")
 
 class GlimpseWindow:
     """
@@ -37,6 +37,8 @@ class GlimpseWindow:
 
         """
 
+        device = delta_caps.get_device()
+        
         # convert dimension sizes to float. lots of math ahead.
         image_size = float(image_size)
         glimpse_size = float(glimpse_size)
@@ -49,20 +51,24 @@ class GlimpseWindow:
         gammas = torch.exp(1.0 - 2 * torch.abs(delta_caps))  # (B)
 
         # coordinate of pixels on the glimpse
-        glimpse_pixels = Variable(torch.arange(0, glimpse_size) - (glimpse_size - 1.0) / 2.0)  # (glimpse_size)
-        if use_cuda:
-            glimpse_pixels = glimpse_pixels.cuda()
+        glimpse_pixels = Variable(torch.arange(0, glimpse_size, device=device) - (glimpse_size - 1.0) / 2.0)  # (glimpse_size)
+#        if use_cuda:
+#            glimpse_pixels = glimpse_pixels.cuda()
 
+#        glimpse_pixels = torch.tensor(glimpse_pixels, device=device)
+        
         # space out with delta
         glimpse_pixels = deltas[:, None] * glimpse_pixels[None, :]  # (B, glimpse_size)
         # center around the centers
         glimpse_pixels = centers[:, None] + glimpse_pixels  # (B, glimpse_size)
 
         # coordinates of pixels on the image
-        image_pixels = Variable(torch.arange(0, image_size))  # (image_size)
-        if use_cuda:
-            image_pixels = image_pixels.cuda()
+        image_pixels = Variable(torch.arange(0, image_size, device=device))  # (image_size)
+#        if use_cuda:
+#            image_pixels = image_pixels.cuda()
 
+#        image_pixels = torch.tensor(image_pixels, device=device)
+        
         fx = image_pixels - glimpse_pixels[:, :, None]  # (B, glimpse_size, image_size)
         fx = fx / gammas[:, None, None]
         fx = fx ** 2.0
@@ -87,6 +93,8 @@ class GlimpseWindow:
 
         """
 
+        device = glimpse_params.get_device()
+        
         batch_size, _ = glimpse_params.size()
 
         # (B, image_h, glimpse_h)
@@ -98,7 +106,7 @@ class GlimpseWindow:
                                     image_size=mask_w, glimpse_size=self.glimpse_w)
 
         # (B, glimpse_h, glimpse_w)
-        glimpse_proxy = Variable(torch.ones(batch_size, self.glimpse_h, self.glimpse_w))
+        glimpse_proxy = Variable(torch.ones(batch_size, self.glimpse_h, self.glimpse_w, device=device))
 
         # find the attention mask that lead to the glimpse.
         mask = glimpse_proxy
@@ -214,6 +222,7 @@ class ARC(nn.Module):
 
         """
 
+        device = image_pairs.get_device()
         # convert to images to float.
         image_pairs = image_pairs.float()
 
@@ -224,11 +233,13 @@ class ARC(nn.Module):
         all_hidden = []
 
         # initial hidden state of the LSTM.
-        Hx = Variable(torch.zeros(batch_size, self.controller_out))  # (B, controller_out)
-        Cx = Variable(torch.zeros(batch_size, self.controller_out))  # (B, controller_out)
+        Hx = Variable(torch.zeros(batch_size, self.controller_out, device=device))  # (B, controller_out)
+        Cx = Variable(torch.zeros(batch_size, self.controller_out, device=device))  # (B, controller_out)
 
-        if use_cuda:
-            Hx, Cx = Hx.cuda(), Cx.cuda()
+        #Hx, Cx = torch.tensor(Hx, device=device), torch.tensor(Cx, device=device)
+        
+#        if use_cuda:
+#            Hx, Cx = Hx.cuda(), Cx.cuda()
 
         # take `num_glimpses` glimpses for both images, alternatingly.
         for turn in range(2*self.num_glimpses):

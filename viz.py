@@ -10,11 +10,12 @@ from batcher import Batcher
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--batchSize', type=int, default=128, help='input batch size')
-parser.add_argument('--imageSize', type=int, default=32, help='the height / width of the input image to ARC')
+parser.add_argument('--batchSize', type=int, default=64, help='input batch size')
+parser.add_argument('--imageHeight', type=int, default=1418, help='the height of the input image to ARC')
+parser.add_argument('--imageWidth', type=int, default=1812, help='the width of the input pdf to ARC')
 parser.add_argument('--glimpseSize', type=int, default=8, help='the height / width of glimpse seen by ARC')
-parser.add_argument('--numStates', type=int, default=128, help='number of hidden states in ARC controller')
-parser.add_argument('--numGlimpses', type=int, default=6, help='the number glimpses of each image in pair seen by ARC')
+parser.add_argument('--numStates', type=int, default=256, help='number of hidden states in ARC controller')
+parser.add_argument('--numGlimpses', type=int, default=10, help='the number glimpses of each image in pair seen by ARC')
 parser.add_argument('--lr', type=float, default=0.0002, help='learning rate, default=0.0002')
 parser.add_argument('--cuda', action='store_true', help='enables cuda')
 parser.add_argument('--name', default=None, help='Custom name for this configuration. Needed for loading model'
@@ -94,7 +95,7 @@ def visualize():
 
     all_hidden = arc._forward(sample[None, :, :])[:, 0, :]  # (2*numGlimpses, controller_out)
     glimpse_params = torch.tanh(arc.glimpser(all_hidden))
-    masks = arc.glimpse_window.get_attention_mask(glimpse_params, mask_h=opt.imageSize, mask_w=opt.imageSize)
+    masks = arc.glimpse_window.get_attention_mask(glimpse_params, mask_h=opt.imageHeight, mask_w=opt.imageWidth)
 
     # separate the masks of each image.
     masks1 = []
